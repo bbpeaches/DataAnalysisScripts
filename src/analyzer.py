@@ -1,5 +1,5 @@
 """
-Data analysis module, implementing Natural Language Processing (NLP) sentiment scoring, data transformation, and correlation matrix logic.
+Data analysis module, implementing Natural Language Processing sentiment scoring, data transformation, and correlation matrix logic.
 """
 from __future__ import annotations
 
@@ -15,8 +15,19 @@ from .scrapers import ScrapedArticle, ScrapedRow
 
 logger = logging.getLogger(__name__)
 
+def _is_chinese_dominant(text: str) -> bool:
+    """Return True if *text* contains more CJK characters than ASCII words."""
+    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+    return cjk > len(text.split()) * 0.3
+
+
 def compute_sentiment(text: str) -> dict[str, float]:
     """Return polarity (-1…+1) and subjectivity (0…1) for *text*."""
+    if _is_chinese_dominant(text):
+        from snownlp import SnowNLP
+        snow = SnowNLP(text)
+        polarity = round((snow.sentiments - 0.5) * 2, 4)
+        return {"polarity": polarity, "subjectivity": 0.5}
     blob = TextBlob(text)
     return {
         "polarity": round(blob.sentiment.polarity, 4),
@@ -50,8 +61,12 @@ def compute_keyword_frequency(
             "neural", "inference", "training", "supercomputer",
         ]
 
+    # ASCII-only boundary: \b breaks on CJK adjacency since CJK chars are
+    # considered word characters by the regex engine.
     pattern = re.compile(
-        r"\b(?:{})\b".format("|".join(re.escape(k) for k in keywords)),
+        r"(?<![a-z0-9])(?:{})(?![a-z0-9])".format(
+            "|".join(re.escape(k) for k in keywords)
+        ),
         re.IGNORECASE,
     )
 
@@ -60,9 +75,12 @@ def compute_keyword_frequency(
 
     for article in articles:
         text = f"{article.title} {article.body_text}".lower()
-        found = {m.group().lower() for m in pattern.finditer(text)}
-        for kw in found:
-            counts[kw] += text.count(kw)
+        found_keywords: set[str] = set()
+        for m in pattern.finditer(text):
+            kw = m.group().lower()
+            counts[kw] += 1
+            found_keywords.add(kw)
+        for kw in found_keywords:
             per_article[kw] += 1
 
     rows = [
@@ -202,10 +220,17 @@ class FinancialAnalyzer:
         if not daily_fund.empty:
             merged = merged.join(daily_fund, how="inner")
 
-        # Overlay average sentiment
+        # Overlay average sentiment aligned to dates
         if not self.sentiment_df.empty and "polarity" in self.sentiment_df.columns:
-            merged["avg_sentiment_polarity"] = self.sentiment_df["polarity"].mean()
-            merged["avg_sentiment_subjectivity"] = self.sentiment_df["subjectivity"].mean()
+            sent = self.sentiment_df[["publish_date", "polarity", "subjectivity"]].copy()
+            sent["publish_date"] = pd.to_datetime(sent["publish_date"], errors="coerce")
+            sent = sent.dropna(subset=["publish_date"])
+            if not sent.empty:
+                daily_sent = sent.groupby("publish_date")[["polarity", "subjectivity"]].mean()
+                daily_sent.index = daily_sent.index.tz_localize(None)
+                daily_sent = daily_sent.reindex(merged.index).ffill()
+                merged["avg_sentiment_polarity"] = daily_sent["polarity"]
+                merged["avg_sentiment_subjectivity"] = daily_sent["subjectivity"]
 
         logger.info("Merged dataset: %d rows × %d columns.", len(merged), len(merged.columns))
         return merged

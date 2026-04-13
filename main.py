@@ -1,4 +1,5 @@
 import logging
+import os
 import warnings
 from typing import cast
 
@@ -9,9 +10,17 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+# Use non-interactive backend when no display is available (e.g. headless servers).
+if os.environ.get("DISPLAY", "") == "" and os.environ.get("MPLBACKEND", "") == "":
+    os.environ["MPLBACKEND"] = "Agg"
+
+import matplotlib
+matplotlib.use(os.environ.get("MPLBACKEND", "Agg"))
+import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np 
+import numpy as np
+import pandas as pd
 
 from src import (
     FinancialAnalyzer,
@@ -24,8 +33,29 @@ from src import (
 )
 from src.scrapers.base import ScrapedRow, ScrapedArticle
 
+OUTPUT_DIR = "output"
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def save_fig(fig, name: str) -> None:
+    path = os.path.join(OUTPUT_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
 plt.style.use("seaborn-v0_8-whitegrid")
 sns.set_palette("husl")
+
+# Configure Chinese font AFTER style to avoid override
+_cjk_font_path = os.path.expanduser("~/.local/share/fonts/NotoSansSC.ttf")
+if os.path.exists(_cjk_font_path):
+    fm.fontManager.addfont(_cjk_font_path)
+    _cjk_prop = fm.FontProperties(fname=_cjk_font_path)
+    plt.rcParams["font.sans-serif"] = (
+        [_cjk_prop.get_name()] + plt.rcParams.get("font.sans-serif", [])
+    )
+    plt.rcParams["axes.unicode_minus"] = False
+
 print("Environment ready.")
 
 market = MarketDataFetcher(ticker="NVDA")
@@ -50,8 +80,8 @@ finviz_articles = [a for a in articles if a.source == "Finviz"]
 ir_articles = [a for a in articles if a.source == "Nvidia IR"]
 
 print(f"Total articles: {len(articles)}")
-print(f"  Finviz headlines: {len(finviz_articles)}")
-print(f"  Nvidia IR press releases: {len(ir_articles)}")
+for src, count in pd.Series([a.source for a in articles]).value_counts().items():
+    print(f"  {src}: {count}")
 
 display_cols = [c for c in ["fyear", "revt", "ni", "xrd", "roe", "rd_intensity", "profit_margin"] if c in fundamentals.columns]
 
@@ -80,7 +110,7 @@ ax.set_xlabel("Date")
 ax.set_ylabel("Price (USD)")
 ax.legend()
 plt.tight_layout()
-plt.show()
+save_fig(fig, "01_daily_close.png")
 
 available_ratios = [c for c in ["roe", "rd_intensity", "profit_margin"] if c in fundamentals.columns]
 
@@ -100,7 +130,7 @@ if available_ratios:
 
     plt.suptitle("Nvidia Key Financial Ratios", fontsize=13, fontweight="bold", y=1.02)
     plt.tight_layout()
-    plt.show()
+    save_fig(fig, "02_financial_ratios.png")
 else:
     print("No derived ratios available — check fundamentals DataFrame.")
 
@@ -127,7 +157,7 @@ if "revt" in fundamentals.columns and "ni" in fundamentals.columns:
 
     ax1.set_title("Revenue, Net Income & Profit Margin", fontsize=13, fontweight="bold")
     plt.tight_layout()
-    plt.show()
+    save_fig(fig, "03_revenue_income.png")
 else:
     print("Revenue / Net Income columns not available.")
 
@@ -141,7 +171,7 @@ for bar in bars:
     w = bar.get_width()
     ax.text(w + 0.3, bar.get_y() + bar.get_height()/2, str(int(w)), va="center", fontsize=10)
 plt.tight_layout()
-plt.show()
+save_fig(fig, "04_top_keywords.png")
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -169,7 +199,7 @@ if not sentiment_df.empty:
     ax.set_ylabel("Subjectivity")
 
 plt.tight_layout()
-plt.show()
+save_fig(fig, "05_sentiment_analysis.png")
 
 analyzer = FinancialAnalyzer(fundamentals, prices, sentiment_df)
 corr = analyzer.compute_correlation_matrix()
@@ -186,6 +216,6 @@ if cols:
     )
     ax.set_title("Correlation: Financial Metrics × Sentiment", fontsize=13, fontweight="bold")
     plt.tight_layout()
-    plt.show()
+    save_fig(fig, "06_correlation_heatmap.png")
 else:
     print("Insufficient data for correlation matrix.")

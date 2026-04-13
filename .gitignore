@@ -22,3 +22,4 @@ Thumbs.db
 .coverage
 htmlcov/
 yfinance_cache.*
+output/

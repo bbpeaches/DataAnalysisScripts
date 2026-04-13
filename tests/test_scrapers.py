@@ -1,8 +1,5 @@
 """
 Unit tests for the scraper hierarchy.
-
-Updated to test the yfinance Adapter and Google News RSS implementations.
-All external calls are mocked to run swiftly and completely offline.
 """
 
 from __future__ import annotations
@@ -16,6 +13,7 @@ from bs4 import BeautifulSoup
 from src.scrapers.base import BaseScraper, ScrapedArticle, ScrapedRow
 from src.scrapers.fundamentals import FundamentalsScraper
 from src.scrapers.news import NewsScraper
+
 
 class TestScrapedArticle:
     def test_word_count(self) -> None:
@@ -38,6 +36,7 @@ class TestScrapedRow:
         assert r.label == "revt"
         assert r.value == 26_974_000_000.0
 
+
 class _DummyScraper(BaseScraper):
     @property
     def name(self) -> str:
@@ -49,6 +48,7 @@ class _DummyScraper(BaseScraper):
 
     def parse(self, soup: BeautifulSoup, url: str) -> list[ScrapedArticle | ScrapedRow]:
         return [ScrapedArticle(title="Test", url=url, publish_date="2024", source="Dummy", body_text="body")]
+
 
 class TestBaseScraper:
     def test_cannot_instantiate_abc(self) -> None:
@@ -77,17 +77,22 @@ class TestBaseScraper:
             with patch.object(s, "_rate_limit"):
                 assert s._fetch("https://bad.com") is None
 
+
 class TestFundamentalsScraper:
     def test_name_and_urls(self) -> None:
-        s = FundamentalsScraper(ticker="NVDA")
+        with patch("src.scrapers.fundamentals._yfinance_available", return_value=True), \
+             patch("src.scrapers.fundamentals._akshare_available", return_value=False):
+            s = FundamentalsScraper(ticker="NVDA")
         assert s.name == "FundamentalsScraper (yfinance Adapter)"
         assert len(s.target_urls) == 1
         assert "api://yfinance" in s.target_urls[0]
 
-    @patch("src.scrapers.fundamentals.yf.Ticker")
-    def test_scrape_success(self, mock_ticker_cls: MagicMock) -> None:
+    @patch("src.scrapers.fundamentals._yfinance_available", return_value=True)
+    @patch("src.scrapers.fundamentals._akshare_available", return_value=False)
+    @patch("yfinance.Ticker")
+    def test_scrape_success(self, mock_ticker_cls: MagicMock, _mock_ak: MagicMock, _mock_yf: MagicMock) -> None:
         mock_ticker = MagicMock()
-        
+
         # Mock transposed DataFrames for financials and balance_sheet
         mock_ticker.financials.T = pd.DataFrame(
             {"Total Revenue": [100.0], "Net Income": [10.0], "Research And Development": [5.0]},
@@ -110,12 +115,49 @@ class TestFundamentalsScraper:
         assert "ceq" in labels
         assert rows[0].source == "Yahoo Finance API"
 
-    @patch("src.scrapers.fundamentals.yf.Ticker")
-    def test_scrape_exception(self, mock_ticker_cls: MagicMock) -> None:
+    @patch("src.scrapers.fundamentals._yfinance_available", return_value=True)
+    @patch("src.scrapers.fundamentals._akshare_available", return_value=False)
+    @patch("yfinance.Ticker")
+    def test_scrape_exception(self, mock_ticker_cls: MagicMock, _mock_ak: MagicMock, _mock_yf: MagicMock) -> None:
         mock_ticker_cls.side_effect = Exception("API down")
         s = FundamentalsScraper(ticker="NVDA")
         rows = s.scrape()
         assert rows == []
+
+    @patch("src.scrapers.fundamentals._yfinance_available", return_value=False)
+    @patch("src.scrapers.fundamentals._akshare_available", return_value=True)
+    @patch("akshare.stock_financial_us_report_em")
+    def test_scrape_akshare_fallback(
+        self, mock_report: MagicMock, _mock_ak: MagicMock, _mock_yf: MagicMock
+    ) -> None:
+        # Mock income statement
+        income_df = pd.DataFrame({
+            "REPORT_DATE": ["2024-01-28"],
+            "REPORT": ["2023/FY"],
+            "STD_ITEM_CODE": ["001"],
+            "AMOUNT": [60.92],
+            "ITEM_NAME": ["营业收入"],
+        })
+        # Mock balance sheet
+        balance_df = pd.DataFrame({
+            "REPORT_DATE": ["2024-01-28"],
+            "REPORT": ["2023/FY"],
+            "STD_ITEM_CODE": ["002"],
+            "AMOUNT": [65.0],
+            "ITEM_NAME": ["总资产"],
+        })
+        mock_report.side_effect = [income_df, balance_df]
+
+        s = FundamentalsScraper(ticker="NVDA")
+        assert s._backend == "akshare"
+        rows = s.scrape()
+
+        assert len(rows) == 2
+        labels = {r.label for r in rows}
+        assert "revt" in labels
+        assert "at" in labels
+        assert rows[0].source == "EastMoney API"
+
 
 _GOOGLE_RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -136,19 +178,26 @@ _GOOGLE_RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>
 """
 
+
 class TestNewsScraper:
     def test_name_and_urls(self) -> None:
-        s = NewsScraper(ticker="NVDA")
+        with patch("src.scrapers.news._google_rss_available", return_value=True), \
+             patch("src.scrapers.news._akshare_available", return_value=False):
+            s = NewsScraper(ticker="NVDA")
         assert s.name == "NewsScraper (Google RSS)"
         assert len(s.target_urls) == 1
         assert "news.google.com" in s.target_urls[0]
 
     def test_parse_empty_feed(self) -> None:
-        s = NewsScraper()
+        with patch("src.scrapers.news._google_rss_available", return_value=True), \
+             patch("src.scrapers.news._akshare_available", return_value=False):
+            s = NewsScraper()
         soup = BeautifulSoup("<rss></rss>", "html.parser")
         assert s.parse(soup, "http://test") == []
 
-    def test_scrape_end_to_end(self) -> None:
+    @patch("src.scrapers.news._google_rss_available", return_value=True)
+    @patch("src.scrapers.news._akshare_available", return_value=False)
+    def test_scrape_end_to_end(self, _mock_ak: MagicMock, _mock_gg: MagicMock) -> None:
         s = NewsScraper(ticker="NVDA")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -163,6 +212,30 @@ class TestNewsScraper:
         assert results[0].title == "Nvidia AI Chip Launch"
         assert results[0].source == "Google News"
         assert "datacenter" in results[0].body_text
-        
+
         # Check that HTML inside the RSS description was parsed correctly
         assert "HTML in description is parsed out." in results[1].body_text
+
+    @patch("src.scrapers.news._google_rss_available", return_value=False)
+    @patch("src.scrapers.news._akshare_available", return_value=True)
+    @patch("akshare.stock_news_em")
+    def test_scrape_akshare_fallback(
+        self, mock_news: MagicMock, _mock_ak: MagicMock, _mock_gg: MagicMock
+    ) -> None:
+        mock_news.return_value = pd.DataFrame({
+            "关键词": ["NVDA", "NVDA"],
+            "新闻标题": ["Nvidia AI Chip Launch", "NVDA Stock Surges"],
+            "新闻内容": ["Nvidia launches new AI chips.", "NVDA stock goes up."],
+            "发布时间": ["2024-01-01", "2024-01-02"],
+            "文章来源": ["EastMoney", "EastMoney"],
+            "新闻链接": ["http://example.com/1", "http://example.com/2"],
+        })
+
+        s = NewsScraper(ticker="NVDA")
+        assert s._backend == "akshare"
+        results = s.scrape()
+
+        assert len(results) == 2
+        assert results[0].title == "Nvidia AI Chip Launch"
+        assert results[0].source == "EastMoney"
+        assert "AI chips" in results[0].body_text

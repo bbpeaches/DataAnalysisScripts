@@ -1,4 +1,5 @@
 yfinance>=0.2.31
+akshare>=1.14.0
 pandas>=2.1.0
 numpy>=1.26.0
 requests>=2.31.0
