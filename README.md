@@ -39,5 +39,5 @@ pytest tests/ -v
 ```
 3. Execute the Analysis Pipeline
 ```bash
-jupyter notebook retail_analysis.ipynb
+jupyter notebook main.ipynb
 ```
