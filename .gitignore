@@ -1,3 +1,4 @@
+.git
 .env
 .venv/
 venv/
@@ -20,3 +21,4 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+yfinance_cache.*

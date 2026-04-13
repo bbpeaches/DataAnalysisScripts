@@ -12,15 +12,8 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-
 class MarketDataFetcher:
-    """Fetches equity market data from Yahoo Finance.
-
-    Parameters
-    ----------
-    ticker : str
-        Yahoo Finance ticker symbol (default ``"NVDA"``).
-    """
+    """Fetches equity market data from Yahoo Finance."""
 
     def __init__(self, ticker: str = "NVDA") -> None:
         self.ticker: str = ticker.upper()
@@ -39,20 +32,7 @@ class MarketDataFetcher:
         start: str = "2020-01-01",
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Download daily OHLCV price history.
-
-        Parameters
-        ----------
-        start : str
-            Inclusive start date (``YYYY-MM-DD``).
-        end : str | None
-            Inclusive end date. Defaults to today.
-
-        Returns
-        -------
-        pd.DataFrame
-            Daily OHLCV with ``DatetimeIndex``.
-        """
+        """Download daily OHLCV price history."""
         end = end or datetime.now().strftime("%Y-%m-%d")
         logger.info("Fetching %s daily prices (%s → %s) …", self.ticker, start, end)
 
@@ -66,13 +46,7 @@ class MarketDataFetcher:
         return hist
 
     def fetch_info(self) -> dict[str, object]:
-        """Retrieve snapshot valuation and profitability metrics.
-
-        Returns
-        -------
-        dict[str, object]
-            Selected metrics (PE, PB, market cap, ROE, growth rates, …).
-        """
+        """Retrieve snapshot valuation and profitability metrics."""
         logger.info("Fetching info snapshot for %s …", self.ticker)
         raw: dict[str, object] = self._tick.info
 
